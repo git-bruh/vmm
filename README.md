@@ -1,10 +1,5 @@
 # vmm
 
-```sh
-$ make
-$ ./vmm
-```
-
 ## Resources
 
 - https://lwn.net/Articles/658511
@@ -20,3 +15,9 @@ $ ./vmm
 - https://github.com/dpw/kvm-hello-world
 
 - https://mergeboard.com/blog/2-qemu-microvm-docker
+
+- https://github.com/naoki9911/zig-vmm
+
+- https://github.com/bobuhiro11/gokvm
+
+- https://github.com/b0bleet/zvisor
