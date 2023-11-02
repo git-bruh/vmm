@@ -113,6 +113,8 @@ impl Kvm {
             kvm_run(self.vcpu.as_raw_fd(), 0)?;
         }
 
+        // The `kvm_run` struct is filled with new data as it was associated
+        // with the `vcpu` FD in the mmap() call
         Ok(self.kvm_run.val as *const kvm_run_t)
     }
 }

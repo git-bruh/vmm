@@ -1,3 +1,4 @@
+/// Wrap a value, executing the `cleanup` callback when it's dropped
 pub struct WrappedAutoFree<T, F: FnMut(&T)> {
     pub val: T,
     cleanup: F,

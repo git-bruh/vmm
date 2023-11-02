@@ -18,6 +18,8 @@ const CODE: [u8; 12] = [
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kvm = Kvm::new()?;
 
+    // Create a mapping for the "user" memory region where we'll copy the
+    // startup code into
     let wrapped_mapping = WrappedAutoFree::new(
         unsafe {
             mman::mmap(
@@ -36,10 +38,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     unsafe { std::ptr::copy_nonoverlapping(CODE.as_ptr(), wrapped_mapping.val as _, CODE.len()) }
 
+    // The mapping is placed at address 0x1000 (4096) in the VM
     kvm.set_user_memory_region(4096, 4096, wrapped_mapping.val as u64)?;
 
     let mut sregs = kvm.get_vcpu_sregs()?;
 
+    // Reset the special registers so that they don't point to the Reset Vector
     sregs.cs.base = 0;
     sregs.cs.selector = 0;
 
@@ -47,8 +51,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut regs = kvm_regs::default();
 
+    // Specified by x86
     regs.rflags = 0x2;
+    // Set the instruction pointer to the start of the copied code
     regs.rip = 4096;
+    // These registers are added together by the code and the output
+    // is written to the specified serial port
     regs.rax = 4;
     regs.rbx = 2;
 
