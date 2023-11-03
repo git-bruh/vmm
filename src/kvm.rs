@@ -26,7 +26,7 @@ pub struct Kvm {
     _kvm: OwnedFd,
     vm: OwnedFd,
     vcpu: OwnedFd,
-    kvm_run: WrappedAutoFree<*mut kvm_run_t, Box<dyn FnMut(&*mut kvm_run_t)>>,
+    kvm_run: WrappedAutoFree<*mut kvm_run_t, Box<dyn FnOnce(*mut kvm_run_t)>>,
 }
 
 impl Kvm {
@@ -54,8 +54,8 @@ impl Kvm {
                     0,
                 )? as *mut kvm_run_t
             },
-            Box::new(move |map: &*mut kvm_run_t| unsafe {
-                mman::munmap(*map as _, mmap_size.get()).expect("failed to unmap kvm_run!");
+            Box::new(move |map: *mut kvm_run_t| unsafe {
+                mman::munmap(map as _, mmap_size.get()).expect("failed to unmap kvm_run!");
             }) as _,
         );
 
@@ -115,6 +115,6 @@ impl Kvm {
 
         // The `kvm_run` struct is filled with new data as it was associated
         // with the `vcpu` FD in the mmap() call
-        Ok(self.kvm_run.val as *const kvm_run_t)
+        Ok(*self.kvm_run as *const kvm_run_t)
     }
 }

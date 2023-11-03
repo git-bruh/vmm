@@ -32,14 +32,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?
         },
         |map| unsafe {
-            mman::munmap(*map, 4096).expect("failed to unmap user memory region!");
+            mman::munmap(map, 4096).expect("failed to unmap user memory region!");
         },
     );
 
-    unsafe { std::ptr::copy_nonoverlapping(CODE.as_ptr(), wrapped_mapping.val as _, CODE.len()) }
+    unsafe { std::ptr::copy_nonoverlapping(CODE.as_ptr(), *wrapped_mapping as _, CODE.len()) }
 
     // The mapping is placed at address 0x1000 (4096) in the VM
-    kvm.set_user_memory_region(4096, 4096, wrapped_mapping.val as u64)?;
+    kvm.set_user_memory_region(4096, 4096, *wrapped_mapping as u64)?;
 
     let mut sregs = kvm.get_vcpu_sregs()?;
 
