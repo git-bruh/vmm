@@ -1,11 +1,51 @@
 use core::num::NonZeroUsize;
-use kvm_bindings::{kvm_regs, KVM_EXIT_HLT, KVM_EXIT_IO};
+use kvm_bindings::{kvm_regs, kvm_segment, KVM_EXIT_HLT, KVM_EXIT_IO};
 use nix::sys::{mman, mman::MapFlags, mman::ProtFlags};
 use std::os::fd::BorrowedFd;
 use vmm::kvm::Kvm;
 use vmm::util::WrappedAutoFree;
 
 const CODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/", "write_serial"));
+const MAPPING_SIZE: usize = 1 << 24;
+
+/// Paging
+#[allow(non_snake_case)]
+mod PageFlags {
+    /// The page is present in physical memory
+    pub const PRESENT: u64 = 1 << 0;
+    /// The page is read/write
+    pub const READ_WRITE: u64 = 1 << 1;
+    /// Make PDE map to a 4MiB page, Page Size Extension must be enabled
+    pub const PAGE_SIZE: u64 = 1 << 7;
+}
+
+/// Control Register 0
+#[allow(non_snake_case)]
+mod Cr0Flags {
+    /// Enable protected mode
+    pub const PE: u64 = 1 << 0;
+    /// Enable paging
+    pub const PG: u64 = 1 << 31;
+}
+
+/// Control Register 4
+#[allow(non_snake_case)]
+mod Cr4Flags {
+    /// Page Size Extension
+    pub const PSE: u64 = 1 << 4;
+    /// Physical Address Extension, size of large pages is reduced from
+    /// 4MiB to 2MiB and PSE is enabled regardless of the PSE bit
+    pub const PAE: u64 = 1 << 5;
+}
+
+/// Extended Feature Enable Register
+#[allow(non_snake_case)]
+mod EferFlags {
+    /// Long Mode Enable
+    pub const LME: u64 = 1 << 8;
+    /// Long Mode Active
+    pub const LMA: u64 = 1 << 10;
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kvm = Kvm::new()?;
@@ -16,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
             mman::mmap(
                 None,
-                NonZeroUsize::new(4096).expect("unreachable, passed > 0"),
+                NonZeroUsize::new(MAPPING_SIZE).expect("unreachable, passed > 0"),
                 ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                 MapFlags::MAP_ANONYMOUS | MapFlags::MAP_SHARED,
                 None::<BorrowedFd>,
@@ -24,33 +64,77 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?
         },
         |map| unsafe {
-            mman::munmap(map, 4096).expect("failed to unmap user memory region!");
+            mman::munmap(map, MAPPING_SIZE).expect("failed to unmap user memory region!");
         },
     );
 
     unsafe { std::ptr::copy_nonoverlapping(CODE.as_ptr(), *wrapped_mapping as _, CODE.len()) }
 
-    // The mapping is placed at address 0x1000 (4096) in the VM
-    kvm.set_user_memory_region(4096, 4096, *wrapped_mapping as u64)?;
+    let pml4_offset = 0x1000;
+    let pdpt_offset = 0x2000;
+    let pd_offset = 0x3000;
+
+    unsafe {
+        *(wrapped_mapping.add(pml4_offset as usize) as *mut u64) =
+            PageFlags::PRESENT | PageFlags::READ_WRITE | pdpt_offset;
+        *(wrapped_mapping.add(pdpt_offset as usize) as *mut u64) =
+            PageFlags::PRESENT | PageFlags::READ_WRITE | pd_offset;
+        *(wrapped_mapping.add(pd_offset as usize) as *mut u64) =
+            PageFlags::PRESENT | PageFlags::READ_WRITE | PageFlags::PAGE_SIZE;
+    }
+
+    // The mapping is placed at address 0 in the VM
+    kvm.set_user_memory_region(0x0, MAPPING_SIZE as u64, *wrapped_mapping as u64)?;
 
     let mut sregs = kvm.get_vcpu_sregs()?;
 
-    // Reset the special registers so that they don't point to the Reset Vector
-    sregs.cs.base = 0;
-    sregs.cs.selector = 0;
+    sregs.cr3 = pml4_offset;
+    sregs.cr4 = Cr4Flags::PAE;
+    sregs.cr0 = Cr0Flags::PE | Cr0Flags::PG;
+    sregs.efer = EferFlags::LMA | EferFlags::LME;
+
+    let segment = kvm_segment {
+        base: 0,
+        limit: 0xffffffff,
+        selector: 1 << 3,
+        // (Code segment) Execute/Read, accessed
+        type_: 11,
+        present: 1,
+        // Level 0 privilege
+        dpl: 0,
+        db: 0,
+        // System segment (code/data)
+        s: 1,
+        // Long Mode
+        l: 1,
+        g: 1,
+        ..Default::default()
+    };
+
+    sregs.cs = segment;
+
+    let segment = kvm_segment {
+        selector: 2 << 12,
+        // (Data segment) Read/Write, accessed
+        type_: 3,
+        ..segment
+    };
+
+    sregs.ds = segment;
+    sregs.es = segment;
+    sregs.fs = segment;
+    sregs.gs = segment;
+    sregs.ss = segment;
 
     kvm.set_vcpu_sregs(&sregs)?;
 
     let mut regs = kvm_regs::default();
 
-    // Specified by x86
-    regs.rflags = 0x2;
+    // Specified by x86 (reserved bit)
+    regs.rflags = 1 << 1;
     // Set the instruction pointer to the start of the copied code
-    regs.rip = 4096;
-    // These registers are added together by the code and the output
-    // is written to the specified serial port
-    regs.rax = 4;
-    regs.rbx = 2;
+    regs.rip = 0;
+    regs.rsp = 0x200000;
 
     kvm.set_vcpu_regs(&regs)?;
 

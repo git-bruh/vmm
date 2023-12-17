@@ -1,14 +1,23 @@
-;; output to the 0x3f8 serial port
-mov dx, 0x3f8
+BITS 64
 
-;; add the al and bl registers and get the ASCII representation
-;; by adding 48 ('0')
-add al, bl
-add al, 48
-out dx, al
+mov rbx, msg
+mov rdx, 0x3f8
 
-;; output a newline, 10 ('\n')
-mov al, 10
-out dx, al
+print:
+  mov rax, [rbx]
 
-hlt
+  ;; print till NUL terminator
+  cmp rax, 0x0
+  je end
+
+  ;; dx, al correspond to rax, rdx
+  out dx, al
+
+  inc rbx
+  jmp print
+
+end:
+  hlt
+
+msg:
+  db `Hello, KVM!\n`
