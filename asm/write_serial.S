@@ -20,4 +20,4 @@ end:
   hlt
 
 msg:
-  db `Hello, KVM!\n`
+  db `Hello, KVM!`
