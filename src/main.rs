@@ -94,37 +94,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     sregs.efer = EferFlags::LMA | EferFlags::LME;
 
     let segment = kvm_segment {
-        base: 0,
-        limit: 0xffffffff,
-        selector: 1 << 3,
-        // (Code segment) Execute/Read, accessed
-        type_: 11,
-        present: 1,
         // Level 0 privilege
         dpl: 0,
         db: 0,
-        // System segment (code/data)
-        s: 1,
         // Long Mode
         l: 1,
-        g: 1,
         ..Default::default()
     };
 
     sregs.cs = segment;
-
-    let segment = kvm_segment {
-        selector: 2 << 12,
-        // (Data segment) Read/Write, accessed
-        type_: 3,
-        ..segment
-    };
-
-    sregs.ds = segment;
-    sregs.es = segment;
-    sregs.fs = segment;
-    sregs.gs = segment;
-    sregs.ss = segment;
 
     kvm.set_vcpu_sregs(&sregs)?;
 
