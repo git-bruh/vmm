@@ -93,6 +93,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     sregs.cr0 = Cr0Flags::PE | Cr0Flags::PG;
     sregs.efer = EferFlags::LMA | EferFlags::LME;
 
+    /// XXX explore why some other projects set bunch of unused flags here and
+    /// store the segment in ds, es, fs, gs, and ss (cite IA64 manual)
+    /// XXX explore what is _actually_ required wrt GDT, etc.
     let segment = kvm_segment {
         // Level 0 privilege
         dpl: 0,
