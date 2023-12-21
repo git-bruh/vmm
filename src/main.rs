@@ -1,9 +1,10 @@
 use core::num::NonZeroUsize;
 use kvm_bindings::{kvm_regs, kvm_segment, KVM_EXIT_HLT, KVM_EXIT_IO};
 use nix::sys::{mman, mman::MapFlags, mman::ProtFlags};
-use std::os::fd::BorrowedFd;
+use std::{io::Read, fs::File, os::fd::BorrowedFd};
 use vmm::kvm::Kvm;
 use vmm::util::WrappedAutoFree;
+use vmm::bootparam::{boot_params, setup_header, LOADED_HIGH, KEEP_SEGMENTS, CAN_USE_HEAP};
 
 const CODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/", "write_serial"));
 const MAPPING_SIZE: usize = 1 << 24;
@@ -47,7 +48,36 @@ mod EferFlags {
     pub const LMA: u64 = 1 << 10;
 }
 
+fn load() {
+    let mut kernel = Vec::new();
+
+    File::open("bzImage")
+        .unwrap()
+        .read_to_end(&mut kernel)
+        .unwrap();
+
+    let khdr: boot_params = unsafe { std::ptr::read(kernel.as_ptr() as *const _) };
+
+    let s = khdr.hdr.header;
+
+    println!("{}", s);
+
+    let shdr = setup_header {
+        vid_mode: 0xFFFF, // VGA
+        type_of_loader: 0xFF, // "Undefined" Bootloader
+        loadflags: (LOADED_HIGH | KEEP_SEGMENTS | CAN_USE_HEAP) as u8,
+        ramdisk_image: 0,
+        ramdisk_size: 0,
+        heap_end_ptr: 0,
+        cmd_line_ptr: 0,
+        ..Default::default()
+    };
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    load();
+    panic!("");
+
     let kvm = Kvm::new()?;
 
     // Create a mapping for the "user" memory region where we'll copy the
