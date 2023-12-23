@@ -1,6 +1,8 @@
 #[macro_use]
 extern crate nix;
 
-pub mod bootparam;
+mod gen;
+
+pub use gen::bootparam;
 pub mod kvm;
 pub mod util;
