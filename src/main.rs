@@ -4,7 +4,7 @@ use nix::sys::{mman, mman::MapFlags, mman::ProtFlags};
 use std::{io::Read, fs::File, os::fd::BorrowedFd};
 use vmm::kvm::Kvm;
 use vmm::util::WrappedAutoFree;
-use vmm::bootparam::{boot_params, setup_header, LOADED_HIGH, KEEP_SEGMENTS, CAN_USE_HEAP};
+use vmm::bootparam::{boot_params, LOADED_HIGH, CAN_USE_HEAP};
 
 const CODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/", "write_serial"));
 const MAPPING_SIZE: usize = 1 << 24;
@@ -48,6 +48,17 @@ mod EferFlags {
     pub const LMA: u64 = 1 << 10;
 }
 
+// Make a temporary bitwise copy that a reference can point to
+// For use in macros like println
+macro_rules! unaligned_read {
+    ($x:expr) => {
+        {
+            let tmp = $x;
+            tmp
+        }
+    };
+}
+
 fn load() {
     let mut kernel = Vec::new();
 
@@ -56,27 +67,60 @@ fn load() {
         .read_to_end(&mut kernel)
         .unwrap();
 
-    let khdr: boot_params = unsafe { std::ptr::read(kernel.as_ptr() as *const _) };
+    // The setup_header is located at offset 0x1f1 (`hdr` field) from the start
+    // of `boot_params` (which is also the start of the kernel image)
+    let boot_params = unsafe { &mut *(kernel.as_mut_ptr().cast::<boot_params>()) };
 
-    let s = khdr.hdr.header;
+    // Ref: 1.3. Details of Header Fields
+    // We just need to modify a few fields here to tell the kernel about
+    // the environment we're setting up. Rest of the information is already
+    // filled in the struct (embedded in the bzImage)
 
-    println!("{}", s);
+    // Some magic values we can check, just to be sure we're not
+    // reading garbage :p
+    assert_eq!(0xAA55, unaligned_read!(boot_params.hdr.boot_flag));
+    assert_eq!(0x53726448, unaligned_read!(boot_params.hdr.header));
 
-    let shdr = setup_header {
-        vid_mode: 0xFFFF, // VGA
-        type_of_loader: 0xFF, // "Undefined" Bootloader
-        loadflags: (LOADED_HIGH | KEEP_SEGMENTS | CAN_USE_HEAP) as u8,
-        ramdisk_image: 0,
-        ramdisk_size: 0,
-        heap_end_ptr: 0,
-        cmd_line_ptr: 0,
-        ..Default::default()
-    };
+    println!("setup_sects: {}", boot_params.hdr.setup_sects);
+
+    // VGA Display
+    boot_params.hdr.vid_mode = 0xFFFF;
+
+    // "Undefined" Bootloader ID
+    boot_params.hdr.type_of_loader = 0xFF;
+
+    // LOADED_HIGH: the protected-mode code is loaded at 0x100000
+    // CAN_USE_HEAP: Self explanatory; heap_end_ptr is valid
+    boot_params.hdr.loadflags |= (LOADED_HIGH | CAN_USE_HEAP) as u8;
+
+    // No initramfs support
+    boot_params.hdr.ramdisk_image = 0;
+    boot_params.hdr.ramdisk_size = 0;
+
+    // Assume protocol version >= 0x202
+    boot_params.hdr.heap_end_ptr = 0xe000 - 0x200;
+    boot_params.hdr.cmd_line_ptr = boot_params.hdr.heap_end_ptr as u32;
+
+    // The 32-bit (non-real-mode) kernel starts at offset (setup_sects+1)*512
+    // in the kernel file (again, if setup_sects == 0 the real value is 4.) 
+    let kernel_offset = (match boot_params.hdr.setup_sects as u32 {
+        0 => 4,
+        sects => sects    
+    } + 1) * 512;
+
+    // Then, the setup header at offset 0x01f1 of kernel image on should be
+    // loaded into struct boot_params and examined. The end of setup header
+    // can be calculated as follows:
+    //     0x0202 + byte value at offset 0x0201
+
+    // 0x0201 refers to the 16 bit `jump` field of the `setup_header` struct
+    // Contains an x86 jump instruction, 0xEB followed by a signed offset relative to byte 0x202
+    // So we just read a byte out of it, i.e. the offset from the header
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     load();
-    panic!("");
+    std::process::abort();
 
     let kvm = Kvm::new()?;
 
