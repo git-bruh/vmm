@@ -1,10 +1,10 @@
 use core::num::NonZeroUsize;
 use kvm_bindings::{kvm_regs, kvm_segment, KVM_EXIT_HLT, KVM_EXIT_IO};
 use nix::sys::{mman, mman::MapFlags, mman::ProtFlags};
-use std::{io::Read, fs::File, os::fd::BorrowedFd};
+use std::{fs::File, io::Read, os::fd::BorrowedFd};
+use vmm::bootparam::{boot_params, CAN_USE_HEAP, LOADED_HIGH};
 use vmm::kvm::Kvm;
 use vmm::util::WrappedAutoFree;
-use vmm::bootparam::{boot_params, LOADED_HIGH, CAN_USE_HEAP};
 
 const CODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/", "write_serial"));
 const MAPPING_SIZE: usize = 1 << 24;
@@ -51,12 +51,10 @@ mod EferFlags {
 // Make a temporary bitwise copy that a reference can point to
 // For use in macros like println
 macro_rules! unaligned_read {
-    ($x:expr) => {
-        {
-            let tmp = $x;
-            tmp
-        }
-    };
+    ($x:expr) => {{
+        let tmp = $x;
+        tmp
+    }};
 }
 
 fn load() {
@@ -102,11 +100,12 @@ fn load() {
     boot_params.hdr.cmd_line_ptr = boot_params.hdr.heap_end_ptr as u32;
 
     // The 32-bit (non-real-mode) kernel starts at offset (setup_sects+1)*512
-    // in the kernel file (again, if setup_sects == 0 the real value is 4.) 
+    // in the kernel file (again, if setup_sects == 0 the real value is 4.)
     let kernel_offset = (match boot_params.hdr.setup_sects as u32 {
         0 => 4,
-        sects => sects    
-    } + 1) * 512;
+        sects => sects,
+    } + 1)
+        * 512;
 
     // Then, the setup header at offset 0x01f1 of kernel image on should be
     // loaded into struct boot_params and examined. The end of setup header
