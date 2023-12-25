@@ -2,9 +2,11 @@ use core::num::NonZeroUsize;
 use kvm_bindings::{kvm_regs, kvm_segment, KVM_EXIT_HLT, KVM_EXIT_IO};
 use nix::sys::{mman, mman::MapFlags, mman::ProtFlags};
 use std::{fs::File, io::Read, os::fd::BorrowedFd};
-use vmm::bootparam::{boot_params, CAN_USE_HEAP, LOADED_HIGH};
+use vmm::bootparam::{boot_e820_entry, boot_params, CAN_USE_HEAP, LOADED_HIGH};
 use vmm::kvm::Kvm;
 use vmm::util::WrappedAutoFree;
+
+const E820_RAM: u32 = 1;
 
 const CODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/", "write_serial"));
 const MAPPING_SIZE: usize = 1 << 24;
@@ -95,8 +97,12 @@ fn load() {
     boot_params.hdr.ramdisk_image = 0;
     boot_params.hdr.ramdisk_size = 0;
 
-    // Assume protocol version >= 0x202
+    // Set this field to the offset (from the beginning of the real-mode code)
+    // of the end of the setup stack/heap, minus 0x0200.
     boot_params.hdr.heap_end_ptr = 0xe000 - 0x200;
+
+    // The cmdline can be located anywhere, but we fit it in the 512 bytes
+    // before the end of the heap ptr
     boot_params.hdr.cmd_line_ptr = boot_params.hdr.heap_end_ptr as u32;
 
     // The 32-bit (non-real-mode) kernel starts at offset (setup_sects+1)*512
@@ -111,10 +117,24 @@ fn load() {
     // loaded into struct boot_params and examined. The end of setup header
     // can be calculated as follows:
     //     0x0202 + byte value at offset 0x0201
-
     // 0x0201 refers to the 16 bit `jump` field of the `setup_header` struct
     // Contains an x86 jump instruction, 0xEB followed by a signed offset relative to byte 0x202
-    // So we just read a byte out of it, i.e. the offset from the header
+    // So we just read a byte out of it, i.e. the offset from the header (0x0202)
+    let offset = boot_params.hdr.jump >> 8;
+
+    // The offset will always be 106 unless a new field is added after
+    // `kernel_info_offset`
+    assert_eq!(offset, 106);
+
+    // Dummy E820 entry, re-uses the existing mapping, will be reworked
+    boot_params.e820_entries = 1;
+    boot_params.e820_table[0] = boot_e820_entry {
+        addr: 0,
+        size: MAPPING_SIZE as u64,
+        type_: E820_RAM,
+    };
+
+    println!("{}", offset);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
