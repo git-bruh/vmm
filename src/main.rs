@@ -50,6 +50,11 @@ mod EferFlags {
     pub const LMA: u64 = 1 << 10;
 }
 
+enum GdtSegType {
+    Code,
+    Data,
+}
+
 // Make a temporary bitwise copy that a reference can point to
 // For use in macros like println
 macro_rules! unaligned_read {
@@ -57,6 +62,83 @@ macro_rules! unaligned_read {
         let tmp = $x;
         tmp
     }};
+}
+
+// 3.4.5 Segment Descriptors
+fn get_gdt_segment(kind: GdtSegType) -> u64 {
+    // This is an overly verbose way of doing this, but should hopefully be
+    // more useful than magic numbers found in other codebases
+
+    // Bits 8 (Segment Type) .. 15 (P)
+    let type_to_p: u64 =
+        // 8 .. 11 (Segment Type)
+        (match kind {
+            // __BOOT_CS must have execute/read permission
+            GdtSegType::Code => {
+                // 1st bit toggles read permissions
+                (1 << 1)
+                // 3rd bit indicates a Code segment
+                | (1 << 3)
+                // Code segment is implied to be executable
+            },
+            // __BOOT_DS must have read/write permission
+            GdtSegType::Data => {
+               // 1st bit toggles write permissions
+               1 << 1
+               // Write permission is implied
+               // No bit is set to indicate a data segment
+            },
+        })
+       // 12 (S, Descriptor Type)
+       // It is set to indicate a code/data segment
+       | (1 << 4)
+       // 13 .. 14 (Descriptor Privilege Level)
+       // Leave it as zeroes for ring 0
+
+       // 15 (P, Segment-Present)
+       // The segment is present (duh)
+       | (1 << 7);
+
+    // Bits 20 (AVL) .. 23 (G)
+    let avl_to_g: u64 =
+       // 20 (AVL)
+       // Available for use by system software, undesirable in our case
+
+       // 21 (L)
+       // Code segment is executed in 64-bit mode
+       (1 << 1)
+       // 22 (D/B)
+       // Indicates 32-bit segments (for DS)
+       // TODO confirm that this won't break the `L` flag we set for
+       // 64-bit execution of CS
+       | (1 << 2)
+       // 23 (G, Granularity)
+       // Scales the limit to 4-KByte units, so we can set the limit to 4GB
+       // while just occupying 20 bits overall
+       // (0xFFFFF * (1024 * 4)) == ((1 << 20) << 12) == (1 << 32) == 4GB
+       | (1 << 3);
+
+    let limit: u64 = 0xFFFFF;
+
+    // The base address will always be 0 in our case, so we don't need to
+    // encode it
+
+    let word: u64 =
+        // 0 .. 8
+
+        // 8 .. 15
+        (type_to_p << 8)
+        // 16 .. 19 (Top 4 bits of limit)
+        | ((limit & 0xF) << 16)
+        // 20 .. 23
+        | (avl_to_g << 20)
+
+        // 24 .. 31
+        // 32 .. 46
+    ;
+
+    // 47 .. 64 (Bottom 16 bits of limit)
+    (word << 32) | (limit >> 4)
 }
 
 fn load() {
@@ -135,6 +217,16 @@ fn load() {
     };
 
     println!("{}", offset);
+
+    let cs = get_gdt_segment(GdtSegType::Code);
+    let ds = get_gdt_segment(GdtSegType::Data);
+
+    println!("CS {cs} {cs:#0X}, DS {ds}, {ds:#0X}");
+
+    // IdentityMap
+    // TSS
+    // Disable interrupts
+    // rsi
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
