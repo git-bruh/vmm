@@ -69,26 +69,37 @@ fn get_gdt_segment(kind: GdtSegType) -> u64 {
     // This is an overly verbose way of doing this, but should hopefully be
     // more useful than magic numbers found in other codebases
 
+    // These flags must be conditionally set wrt the kind of segment
+    let (segment_type, l, db) = match kind {
+        // __BOOT_CS must have execute/read permission
+        GdtSegType::Code => {
+            (
+                // Code segment is implied to be executable
+                // 1st bit toggles read permissions, 3rd bit indicates a Code segment
+                ((1 << 1) | (1 << 3)),
+                // L, 64-bit mode
+                (1 << 1),
+                (0),
+            )
+        }
+        // __BOOT_DS must have read/write permission
+        GdtSegType::Data => {
+            (
+                // Read permission is implied
+                // 1st bit toggles write permissions
+                // No bit is required to indicate a data segment
+                (1 << 1),
+                (0),
+                // D/B, 32-bit segment
+                (1 << 2),
+            )
+        }
+    };
+
     // Bits 8 (Segment Type) .. 15 (P)
     let type_to_p: u64 =
-        // 8 .. 11 (Segment Type)
-        (match kind {
-            // __BOOT_CS must have execute/read permission
-            GdtSegType::Code => {
-                // 1st bit toggles read permissions
-                (1 << 1)
-                // 3rd bit indicates a Code segment
-                | (1 << 3)
-                // Code segment is implied to be executable
-            },
-            // __BOOT_DS must have read/write permission
-            GdtSegType::Data => {
-               // 1st bit toggles write permissions
-               1 << 1
-               // Read permission is implied
-               // No bit is set to indicate a data segment
-            },
-        })
+       // 8 .. 11 (Segment Type)
+       segment_type
        // 12 (S, Descriptor Type)
        // It is set to indicate a code/data segment
        | (1 << 4)
@@ -106,12 +117,12 @@ fn get_gdt_segment(kind: GdtSegType) -> u64 {
 
        // 21 (L)
        // Code segment is executed in 64-bit mode
-       (1 << 1)
+       // For DS, L bit must not be set
+       l
        // 22 (D/B)
-       // Indicates 32-bit segments (for DS)
-       // TODO confirm that this won't break the `L` flag we set for
-       // 64-bit execution of CS
-       | (1 << 2)
+       // Indicates 32-bit, must only be set for DS
+       // For CS, if the L-bit is set, then the D-bit must be cleared
+       | db
        // 23 (G, Granularity)
        // Scales the limit to 4-KByte units, so we can set the limit to 4GB
        // while just occupying 20 bits overall
