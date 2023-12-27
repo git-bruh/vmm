@@ -85,7 +85,7 @@ fn get_gdt_segment(kind: GdtSegType) -> u64 {
             GdtSegType::Data => {
                // 1st bit toggles write permissions
                1 << 1
-               // Write permission is implied
+               // Read permission is implied
                // No bit is set to indicate a data segment
             },
         })
