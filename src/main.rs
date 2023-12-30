@@ -1,5 +1,5 @@
 use core::num::NonZeroUsize;
-use kvm_bindings::{kvm_regs, kvm_segment, KVM_EXIT_HLT, KVM_EXIT_IO};
+use kvm_bindings::{kvm_dtable, kvm_regs, kvm_segment, KVM_EXIT_HLT, KVM_EXIT_IO};
 use nix::sys::{mman, mman::MapFlags, mman::ProtFlags};
 use std::{fs::File, io::Read, os::fd::BorrowedFd};
 use vmm::bootparam::{boot_e820_entry, boot_params, CAN_USE_HEAP, LOADED_HIGH};
@@ -152,7 +152,7 @@ fn get_gdt_segment(kind: GdtSegType) -> u64 {
     (word << 32) | (limit >> 4)
 }
 
-fn load() {
+fn load(mapping: *mut u64) {
     let mut kernel = Vec::new();
 
     File::open("bzImage")
@@ -232,8 +232,16 @@ fn load() {
     let cs = get_gdt_segment(GdtSegType::Code);
     let ds = get_gdt_segment(GdtSegType::Data);
 
+    unsafe {
+        // Copy to 0x10 (2 * 8)
+        *mapping.add(2) = cs;
+        // 0x18
+        *mapping.add(3) = ds;
+    }
+
     println!("CS {cs} {cs:#0X}, DS {ds}, {ds:#0X}");
 
+    // All the fields are described in the above comments
     // IdentityMap
     // TSS
     // Disable interrupts
@@ -289,25 +297,60 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     sregs.cr0 = Cr0Flags::PE | Cr0Flags::PG;
     sregs.efer = EferFlags::LMA | EferFlags::LME;
 
-    /// XXX explore why some other projects set bunch of unused flags here and
-    /// store the segment in ds, es, fs, gs, and ss (cite IA64 manual)
-    /// XXX explore what is _actually_ required wrt GDT, etc.
-    let segment = kvm_segment {
-        // Level 0 privilege
+    let cs = kvm_segment {
+        base: 0,
+        limit: 0xFFFFFFFF,
+        selector: 0x10,
         dpl: 0,
         db: 0,
-        // Long Mode
+        g: 1,
+        s: 1,
         l: 1,
+        type_: 0xa,
+        present: 1,
         ..Default::default()
     };
 
-    sregs.cs = segment;
+    let ds = kvm_segment {
+        base: 0,
+        limit: 0xFFFFFFFF,
+        selector: 0x18,
+        dpl: 0,
+        db: 1,
+        g: 1,
+        s: 1,
+        l: 0,
+        type_: 0x02,
+        present: 1,
+        ..Default::default()
+    };
+
+    sregs.cs = cs;
+
+    sregs.ds = ds;
+    sregs.es = ds;
+    sregs.fs = ds;
+    sregs.gs = ds;
+    sregs.ss = ds;
+
+    sregs.gdt = kvm_dtable {
+        base: 0,
+        limit: 4096,
+        ..Default::default()
+    };
+    sregs.idt = kvm_dtable::default();
 
     kvm.set_vcpu_sregs(&sregs)?;
+
+    kvm.create_irqchip()?;
+    kvm.create_pit2()?;
+    kvm.set_tss_addr(0xFFFFD000)?;
+    kvm.set_identity_map_addr(0xFFFFC000)?;
 
     let mut regs = kvm_regs::default();
 
     // Specified by x86 (reserved bit)
+    // Interrupts are disabled
     regs.rflags = 1 << 1;
     // Set the instruction pointer to the start of the copied code
     regs.rip = 0;

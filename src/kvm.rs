@@ -1,6 +1,8 @@
 use crate::util::WrappedAutoFree;
 use core::num::NonZeroUsize;
-use kvm_bindings::{kvm_regs, kvm_run as kvm_run_t, kvm_sregs, kvm_userspace_memory_region, KVMIO};
+use kvm_bindings::{
+    kvm_pit_config, kvm_regs, kvm_run as kvm_run_t, kvm_sregs, kvm_userspace_memory_region, KVMIO,
+};
 use nix::{
     fcntl,
     fcntl::OFlag,
@@ -21,6 +23,10 @@ ioctl_write_ptr!(
 ioctl_write_ptr!(kvm_set_regs, KVMIO, 0x82, kvm_regs);
 ioctl_read!(kvm_get_sregs, KVMIO, 0x83, kvm_sregs);
 ioctl_write_ptr!(kvm_set_sregs, KVMIO, 0x84, kvm_sregs);
+ioctl_write_int!(kvm_set_tss_addr, KVMIO, 0x47);
+ioctl_write_int!(kvm_set_identity_map_addr, KVMIO, 0x48);
+ioctl_none!(kvm_create_irqchip, KVMIO, 0x60);
+ioctl_write_ptr!(kvm_create_pit2, KVMIO, 0x64, kvm_pit_config);
 
 pub struct Kvm {
     _kvm: OwnedFd,
@@ -104,6 +110,30 @@ impl Kvm {
 
     pub fn set_vcpu_regs(&self, regs: *const kvm_regs) -> Result<(), std::io::Error> {
         unsafe { kvm_set_regs(self.vcpu.as_raw_fd(), regs)? };
+
+        Ok(())
+    }
+
+    pub fn create_irqchip(&self) -> Result<(), std::io::Error> {
+        unsafe { kvm_create_irqchip(self.vcpu.as_raw_fd())? };
+
+        Ok(())
+    }
+
+    pub fn create_pit2(&self) -> Result<(), std::io::Error> {
+        unsafe { kvm_create_pit2(self.vcpu.as_raw_fd(), &kvm_pit_config::default())? };
+
+        Ok(())
+    }
+
+    pub fn set_tss_addr(&self, addr: u64) -> Result<(), std::io::Error> {
+        unsafe { kvm_set_tss_addr(self.vcpu.as_raw_fd(), addr)? };
+
+        Ok(())
+    }
+
+    pub fn set_identity_map_addr(&self, addr: u64) -> Result<(), std::io::Error> {
+        unsafe { kvm_set_identity_map_addr(self.vcpu.as_raw_fd(), addr)? };
 
         Ok(())
     }
