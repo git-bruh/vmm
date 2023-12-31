@@ -152,7 +152,7 @@ fn get_gdt_segment(kind: GdtSegType) -> u64 {
     (word << 32) | (limit >> 4)
 }
 
-fn load(mapping: *mut u8) {
+fn load(mapping: *mut u8) -> u64 {
     let mut kernel = Vec::new();
 
     File::open("bzImage")
@@ -250,6 +250,8 @@ fn load(mapping: *mut u8) {
             kernel.len() - kernel_offset,
         );
     }
+
+    0x100000 + 0x200
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -273,7 +275,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
-    load(*wrapped_mapping as *mut _);
+    let ip = load(*wrapped_mapping as *mut _);
 
     // unsafe { std::ptr::copy_nonoverlapping(CODE.as_ptr(), *wrapped_mapping as _, CODE.len()) }
 
@@ -354,7 +356,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     regs.rflags = 1 << 1;
 
     // Set the instruction pointer to the start of the copied code
-    regs.rip = 0;
+    regs.rip = ip;
 
     // boot_params
     regs.rsi = 0x10000;
