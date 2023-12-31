@@ -374,12 +374,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 KVM_EXIT_IO => {
                     println!(
-                        "IO for port {}: {}",
+                        "IO for port {}: {:#02x}",
                         // TODO abstract out epic bindgen union moment
                         (*kvm_run).__bindgen_anon_1.io.port,
                         // TODO abstract out epic struct as bytes moment
                         *((kvm_run as u64 + (*kvm_run).__bindgen_anon_1.io.data_offset)
-                            as *const u8) as char
+                            as *const u8)
                     );
                 }
                 reason => {
