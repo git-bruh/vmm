@@ -152,7 +152,7 @@ fn get_gdt_segment(kind: GdtSegType) -> u64 {
     (word << 32) | (limit >> 4)
 }
 
-fn load(mapping: *mut u64) {
+fn load(mapping: *mut u8) {
     let mut kernel = Vec::new();
 
     File::open("bzImage")
@@ -192,18 +192,18 @@ fn load(mapping: *mut u64) {
 
     // Set this field to the offset (from the beginning of the real-mode code)
     // of the end of the setup stack/heap, minus 0x0200.
-    boot_params.hdr.heap_end_ptr = 0xe000 - 0x200;
+    boot_params.hdr.heap_end_ptr = 0; // 0xe000 - 0x200;
 
     // The cmdline can be located anywhere, but we fit it in the 512 bytes
     // before the end of the heap ptr
-    boot_params.hdr.cmd_line_ptr = boot_params.hdr.heap_end_ptr as u32;
+    boot_params.hdr.cmd_line_ptr = 0x20000; // base_ptr + boot_params.hdr.heap_end_ptr as u32;
 
     // The 32-bit (non-real-mode) kernel starts at offset (setup_sects+1)*512
     // in the kernel file (again, if setup_sects == 0 the real value is 4.)
     let kernel_offset = (match boot_params.hdr.setup_sects as u32 {
         0 => 4,
         sects => sects,
-    } + 1)
+    } + 1) as usize
         * 512;
 
     // Then, the setup header at offset 0x01f1 of kernel image on should be
@@ -232,26 +232,27 @@ fn load(mapping: *mut u64) {
     let cs = get_gdt_segment(GdtSegType::Code);
     let ds = get_gdt_segment(GdtSegType::Data);
 
-    unsafe {
-        // Copy to 0x10 (2 * 8)
-        *mapping.add(2) = cs;
-        // 0x18
-        *mapping.add(3) = ds;
-    }
-
     println!("CS {cs} {cs:#0X}, DS {ds}, {ds:#0X}");
 
-    // All the fields are described in the above comments
-    // IdentityMap
-    // TSS
-    // Disable interrupts
-    // rsi
+    unsafe {
+        std::ptr::copy_nonoverlapping(&cs, mapping.add(0x10) as *mut u64, 1);
+        std::ptr::copy_nonoverlapping(&ds, mapping.add(0x18) as *mut u64, 1);
+
+        std::ptr::copy_nonoverlapping(boot_params, mapping.add(0x10000) as *mut boot_params, 1);
+
+        let cmdline = b"console=ttyS0\0";
+
+        std::ptr::copy_nonoverlapping(cmdline as *const u8, mapping.add(0x20000), cmdline.len());
+
+        std::ptr::copy_nonoverlapping(
+            kernel[kernel_offset..].as_ptr(),
+            mapping.add(0x100000),
+            kernel.len() - kernel_offset,
+        );
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    load();
-    std::process::abort();
-
     let kvm = Kvm::new()?;
 
     // Create a mapping for the "user" memory region where we'll copy the
@@ -272,7 +273,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
-    unsafe { std::ptr::copy_nonoverlapping(CODE.as_ptr(), *wrapped_mapping as _, CODE.len()) }
+    load(*wrapped_mapping as *mut _);
+
+    // unsafe { std::ptr::copy_nonoverlapping(CODE.as_ptr(), *wrapped_mapping as _, CODE.len()) }
 
     let pml4_offset = 0x1000;
     let pdpt_offset = 0x2000;
@@ -342,19 +345,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     kvm.set_vcpu_sregs(&sregs)?;
 
-    kvm.create_irqchip()?;
-    kvm.create_pit2()?;
     kvm.set_tss_addr(0xFFFFD000)?;
-    kvm.set_identity_map_addr(0xFFFFC000)?;
 
     let mut regs = kvm_regs::default();
 
     // Specified by x86 (reserved bit)
     // Interrupts are disabled
     regs.rflags = 1 << 1;
+
     // Set the instruction pointer to the start of the copied code
     regs.rip = 0;
-    regs.rsp = 0x200000;
+
+    // boot_params
+    regs.rsi = 0x10000;
 
     kvm.set_vcpu_regs(&regs)?;
 

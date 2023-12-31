@@ -4,11 +4,16 @@ use kvm_bindings::{
     kvm_pit_config, kvm_regs, kvm_run as kvm_run_t, kvm_sregs, kvm_userspace_memory_region, KVMIO,
 };
 use nix::{
+    errno::Errno,
     fcntl,
     fcntl::OFlag,
+    libc,
     sys::{mman, mman::MapFlags, mman::ProtFlags, stat::Mode},
 };
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::{
+    ffi::c_int,
+    os::fd::{AsRawFd, FromRawFd, OwnedFd},
+};
 
 ioctl_write_int_bad!(kvm_create_vm, request_code_none!(KVMIO, 0x01));
 ioctl_write_int_bad!(kvm_get_vcpu_mmap_size, request_code_none!(KVMIO, 0x04));
@@ -23,10 +28,19 @@ ioctl_write_ptr!(
 ioctl_write_ptr!(kvm_set_regs, KVMIO, 0x82, kvm_regs);
 ioctl_read!(kvm_get_sregs, KVMIO, 0x83, kvm_sregs);
 ioctl_write_ptr!(kvm_set_sregs, KVMIO, 0x84, kvm_sregs);
-ioctl_write_int!(kvm_set_tss_addr, KVMIO, 0x47);
-ioctl_write_int!(kvm_set_identity_map_addr, KVMIO, 0x48);
 ioctl_none!(kvm_create_irqchip, KVMIO, 0x60);
-ioctl_write_ptr!(kvm_create_pit2, KVMIO, 0x64, kvm_pit_config);
+ioctl_write_ptr!(kvm_create_pit2, KVMIO, 0x77, kvm_pit_config);
+
+/*
+   Blocked on https://github.com/nix-rust/nix/pull/2233
+   ioctl_write_int_bad!(kvm_set_tss_addr, request_code_none!(KVMIO, 0x47));
+*/
+
+ioctl_write_ptr!(kvm_set_identity_map_addr, KVMIO, 0x48, u64);
+
+unsafe fn kvm_set_tss_addr(fd: c_int, data: u64) -> nix::Result<c_int> {
+    Errno::result(libc::ioctl(fd, request_code_none!(KVMIO, 0x47), data))
+}
 
 pub struct Kvm {
     _kvm: OwnedFd,
@@ -40,6 +54,15 @@ impl Kvm {
         let kvm =
             unsafe { OwnedFd::from_raw_fd(fcntl::open("/dev/kvm", OFlag::O_RDWR, Mode::empty())?) };
         let vm = unsafe { OwnedFd::from_raw_fd(kvm_create_vm(kvm.as_raw_fd(), 0)?) };
+
+        unsafe {
+            kvm_create_irqchip(vm.as_raw_fd())?;
+            kvm_create_pit2(vm.as_raw_fd(), &kvm_pit_config::default())?;
+
+            let idmap_addr = 0xFFFFC000;
+            kvm_set_identity_map_addr(vm.as_raw_fd(), &idmap_addr)?;
+        };
+
         let vcpu = unsafe { OwnedFd::from_raw_fd(kvm_create_vcpu(vm.as_raw_fd(), 0)?) };
 
         let mmap_size = NonZeroUsize::new(unsafe {
@@ -114,26 +137,8 @@ impl Kvm {
         Ok(())
     }
 
-    pub fn create_irqchip(&self) -> Result<(), std::io::Error> {
-        unsafe { kvm_create_irqchip(self.vcpu.as_raw_fd())? };
-
-        Ok(())
-    }
-
-    pub fn create_pit2(&self) -> Result<(), std::io::Error> {
-        unsafe { kvm_create_pit2(self.vcpu.as_raw_fd(), &kvm_pit_config::default())? };
-
-        Ok(())
-    }
-
     pub fn set_tss_addr(&self, addr: u64) -> Result<(), std::io::Error> {
-        unsafe { kvm_set_tss_addr(self.vcpu.as_raw_fd(), addr)? };
-
-        Ok(())
-    }
-
-    pub fn set_identity_map_addr(&self, addr: u64) -> Result<(), std::io::Error> {
-        unsafe { kvm_set_identity_map_addr(self.vcpu.as_raw_fd(), addr)? };
+        unsafe { kvm_set_tss_addr(self.vm.as_raw_fd(), addr)? };
 
         Ok(())
     }
