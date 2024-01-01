@@ -1,5 +1,5 @@
 use core::num::NonZeroUsize;
-use kvm_bindings::{kvm_dtable, kvm_regs, kvm_segment, KVM_EXIT_HLT, KVM_EXIT_IO};
+use kvm_bindings::{kvm_dtable, kvm_regs, kvm_segment, KVM_EXIT_DEBUG, KVM_EXIT_HLT, KVM_EXIT_IO};
 use nix::sys::{mman, mman::MapFlags, mman::ProtFlags};
 use std::{fs::File, io::Read, os::fd::BorrowedFd};
 use vmm::bootparam::{boot_e820_entry, boot_params, CAN_USE_HEAP, LOADED_HIGH};
@@ -227,8 +227,6 @@ fn load(mapping: *mut u8) -> u64 {
         type_: E820_RAM,
     };
 
-    println!("{}", offset);
-
     let cs = get_gdt_segment(GdtSegType::Code);
     let ds = get_gdt_segment(GdtSegType::Data);
 
@@ -363,6 +361,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     kvm.set_vcpu_regs(&regs)?;
 
+    println!("{:#?}", kvm.get_vcpu_regs()?);
+
+    kvm.enable_debug()?;
+
     loop {
         let kvm_run = kvm.run()?;
 
@@ -381,6 +383,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         *((kvm_run as u64 + (*kvm_run).__bindgen_anon_1.io.data_offset)
                             as *const u8)
                     );
+                }
+                KVM_EXIT_DEBUG => {
+                    println!("{:#?}", (*kvm_run).__bindgen_anon_1.debug);
                 }
                 reason => {
                     eprintln!("Unhandled exit reason: {reason}");

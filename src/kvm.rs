@@ -1,7 +1,8 @@
 use crate::util::WrappedAutoFree;
 use core::num::NonZeroUsize;
 use kvm_bindings::{
-    kvm_pit_config, kvm_regs, kvm_run as kvm_run_t, kvm_sregs, kvm_userspace_memory_region, KVMIO,
+    kvm_guest_debug, kvm_pit_config, kvm_regs, kvm_run as kvm_run_t, kvm_sregs,
+    kvm_userspace_memory_region, KVMIO, KVM_GUESTDBG_ENABLE, KVM_GUESTDBG_SINGLESTEP,
 };
 use nix::{
     errno::Errno,
@@ -25,11 +26,13 @@ ioctl_write_ptr!(
     0x46,
     kvm_userspace_memory_region
 );
+ioctl_read!(kvm_get_regs, KVMIO, 0x81, kvm_regs);
 ioctl_write_ptr!(kvm_set_regs, KVMIO, 0x82, kvm_regs);
 ioctl_read!(kvm_get_sregs, KVMIO, 0x83, kvm_sregs);
 ioctl_write_ptr!(kvm_set_sregs, KVMIO, 0x84, kvm_sregs);
 ioctl_none!(kvm_create_irqchip, KVMIO, 0x60);
 ioctl_write_ptr!(kvm_create_pit2, KVMIO, 0x77, kvm_pit_config);
+ioctl_write_ptr!(kvm_set_guest_debug, KVMIO, 0x9b, kvm_guest_debug);
 
 /*
    Blocked on https://github.com/nix-rust/nix/pull/2233
@@ -131,6 +134,13 @@ impl Kvm {
         Ok(())
     }
 
+    pub fn get_vcpu_regs(&self) -> Result<kvm_regs, std::io::Error> {
+        let mut regs = kvm_regs::default();
+        unsafe { kvm_get_regs(self.vcpu.as_raw_fd(), &mut regs)? };
+
+        Ok(regs)
+    }
+
     pub fn set_vcpu_regs(&self, regs: *const kvm_regs) -> Result<(), std::io::Error> {
         unsafe { kvm_set_regs(self.vcpu.as_raw_fd(), regs)? };
 
@@ -139,6 +149,21 @@ impl Kvm {
 
     pub fn set_tss_addr(&self, addr: u64) -> Result<(), std::io::Error> {
         unsafe { kvm_set_tss_addr(self.vm.as_raw_fd(), addr)? };
+
+        Ok(())
+    }
+
+    pub fn enable_debug(&self) -> Result<(), std::io::Error> {
+        let mut dbg = kvm_guest_debug {
+            control: KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP,
+            ..Default::default()
+        };
+
+        dbg.arch.debugreg[7] = 0x00000400;
+
+        unsafe {
+            kvm_set_guest_debug(self.vcpu.as_raw_fd(), &dbg)?;
+        }
 
         Ok(())
     }
