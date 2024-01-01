@@ -290,8 +290,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             PageFlags::PRESENT | PageFlags::READ_WRITE | pdpt_offset;
         *(wrapped_mapping.add(pdpt_offset as usize) as *mut u64) =
             PageFlags::PRESENT | PageFlags::READ_WRITE | pd_offset;
-        *(wrapped_mapping.add(pd_offset as usize) as *mut u64) =
-            PageFlags::PRESENT | PageFlags::READ_WRITE | PageFlags::PAGE_SIZE;
+
+        for i in 0..512 {
+            *(wrapped_mapping.add((pd_offset + (i * 8)) as usize) as *mut u64) =
+                (i << 21) + 0x83u64;
+        }
     }
 
     // The mapping is placed at address 0 in the VM
