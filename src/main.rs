@@ -370,11 +370,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     kvm.set_vcpu_regs(&regs)?;
 
-    println!("{:#?}", kvm.get_vcpu_regs()?);
-
     kvm.enable_debug()?;
-
-    println!("{:#?}", kvm.get_vcpu_events()?);
 
     loop {
         let kvm_run = kvm.run()?;
@@ -396,18 +392,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                 }
                 KVM_EXIT_DEBUG => {
-                    println!("{:#?}", (*kvm_run).__bindgen_anon_1.debug);
-                    println!("{:#?}", kvm.get_vcpu_regs()?);
+                    let regs = kvm.get_vcpu_regs()?;
+                    // println!("{:#?}", (*kvm_run).__bindgen_anon_1.debug);
+                    println!(
+                        "rip {}, rsp {}, rbx {}, rdi {}, rbp {}",
+                        regs.rip, regs.rsp, regs.rbx, regs.rdi, regs.rbp
+                    );
                 }
                 reason => {
                     eprintln!("Unhandled exit reason: {reason}");
+                    eprintln!("{:#?}", kvm.get_vcpu_events()?);
+
                     break;
                 }
             }
         }
     }
-
-    println!("{:#?}", kvm.get_vcpu_events()?);
 
     Ok(())
 }
