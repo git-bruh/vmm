@@ -1,8 +1,9 @@
 use crate::util::WrappedAutoFree;
 use core::num::NonZeroUsize;
 use kvm_bindings::{
-    kvm_guest_debug, kvm_pit_config, kvm_regs, kvm_run as kvm_run_t, kvm_sregs,
-    kvm_userspace_memory_region, KVMIO, KVM_GUESTDBG_ENABLE, KVM_GUESTDBG_SINGLESTEP,
+    kvm_enable_cap, kvm_guest_debug, kvm_pit_config, kvm_regs, kvm_run as kvm_run_t, kvm_sregs,
+    kvm_userspace_memory_region, kvm_vcpu_events, KVMIO, KVM_GUESTDBG_ENABLE,
+    KVM_GUESTDBG_SINGLESTEP,
 };
 use nix::{
     errno::Errno,
@@ -33,6 +34,8 @@ ioctl_write_ptr!(kvm_set_sregs, KVMIO, 0x84, kvm_sregs);
 ioctl_none!(kvm_create_irqchip, KVMIO, 0x60);
 ioctl_write_ptr!(kvm_create_pit2, KVMIO, 0x77, kvm_pit_config);
 ioctl_write_ptr!(kvm_set_guest_debug, KVMIO, 0x9b, kvm_guest_debug);
+ioctl_write_ptr!(kvm_enable_capability, KVMIO, 0xa3, kvm_enable_cap);
+ioctl_read!(kvm_get_vcpu_events, KVMIO, 0x9f, kvm_vcpu_events);
 
 /*
    Blocked on https://github.com/nix-rust/nix/pull/2233
@@ -165,7 +168,28 @@ impl Kvm {
             kvm_set_guest_debug(self.vcpu.as_raw_fd(), &dbg)?;
         }
 
+        unsafe {
+            kvm_enable_capability(
+                self.vm.as_raw_fd(),
+                &kvm_enable_cap {
+                    // KVM_CAP_X86_TRIPLE_FAULT_EVENT
+                    cap: 218,
+                    ..Default::default()
+                },
+            )?;
+        }
+
         Ok(())
+    }
+
+    pub fn get_vcpu_events(&self) -> Result<kvm_vcpu_events, std::io::Error> {
+        let mut events = kvm_vcpu_events::default();
+
+        unsafe {
+            kvm_get_vcpu_events(self.vcpu.as_raw_fd(), &mut events)?;
+        }
+
+        Ok(events)
     }
 
     pub fn run(&self) -> Result<*const kvm_run_t, std::io::Error> {

@@ -9,7 +9,7 @@ use vmm::util::WrappedAutoFree;
 const E820_RAM: u32 = 1;
 
 const CODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/", "write_serial"));
-const MAPPING_SIZE: usize = 1 << 24;
+const MAPPING_SIZE: usize = 1 << 30;
 
 /// Paging
 #[allow(non_snake_case)]
@@ -249,6 +249,12 @@ fn load(mapping: *mut u8) -> u64 {
         );
     }
 
+    use std::{fs::File, io::Write};
+    File::create("/tmp/bruh")
+        .unwrap()
+        .write_all(&kernel[kernel_offset + 0x200..])
+        .unwrap();
+
     0x100000 + 0x200
 }
 
@@ -274,8 +280,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let ip = load(*wrapped_mapping as *mut _);
-
-    // unsafe { std::ptr::copy_nonoverlapping(CODE.as_ptr(), *wrapped_mapping as _, CODE.len()) }
 
     let pml4_offset = 0x1000;
     let pdpt_offset = 0x2000;
@@ -356,6 +360,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set the instruction pointer to the start of the copied code
     regs.rip = ip;
 
+    // unsafe { std::ptr::copy_nonoverlapping(CODE.as_ptr(), wrapped_mapping.add(ip as usize) as _, CODE.len()) }
+
     // boot_params
     regs.rsi = 0x10000;
 
@@ -364,6 +370,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{:#?}", kvm.get_vcpu_regs()?);
 
     kvm.enable_debug()?;
+
+    println!("{:#?}", kvm.get_vcpu_events()?);
 
     loop {
         let kvm_run = kvm.run()?;
@@ -386,6 +394,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 KVM_EXIT_DEBUG => {
                     println!("{:#?}", (*kvm_run).__bindgen_anon_1.debug);
+                    println!("{:#?}", kvm.get_vcpu_regs()?);
                 }
                 reason => {
                     eprintln!("Unhandled exit reason: {reason}");
@@ -394,6 +403,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
+    println!("{:#?}", kvm.get_vcpu_events()?);
 
     Ok(())
 }
