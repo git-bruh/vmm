@@ -348,7 +348,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         limit: 4096,
         ..Default::default()
     };
-    sregs.idt = kvm_dtable::default();
+    sregs.idt = kvm_dtable {
+        base: 0x4000,
+        limit: 0xfff,
+        ..Default::default()
+    };
+
+    #[repr(C, packed)]
+    #[derive(Default)]
+    struct Intr {
+        base_lo: u16,
+        sel: u16,
+        always0: u8,
+        flags: u8,
+        base_hi: u16,
+        pad: u64,
+    };
+
+    for i in 0..256 {
+        let intr = Intr {
+            base_lo: 0x5000,
+            sel: 0x10,
+            flags: 0x8f,
+            ..Default::default()
+        };
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(&intr, wrapped_mapping.add(0x4000 + (i * 16)) as *mut Intr, 1);
+        }
+    }
+
+    unsafe {
+        let map = wrapped_mapping.add(0x5000) as *mut u8;
+
+        *map.add(0) = 238;
+        *map.add(1) = 244;
+    }
 
     kvm.set_vcpu_sregs(&sregs)?;
 
@@ -362,8 +397,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Set the instruction pointer to the start of the copied code
     regs.rip = ip;
+    regs.rsp = 0x200000;
 
-    // unsafe { std::ptr::copy_nonoverlapping(CODE.as_ptr(), wrapped_mapping.add(ip as usize) as _, CODE.len()) }
+    unsafe { std::ptr::copy_nonoverlapping(CODE.as_ptr(), wrapped_mapping.add(ip as usize) as _, CODE.len()) }
 
     // boot_params
     regs.rsi = 0x10000;
@@ -390,19 +426,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         *((kvm_run as u64 + (*kvm_run).__bindgen_anon_1.io.data_offset)
                             as *const u8)
                     );
+
+                    println!("{:#?}", kvm.get_vcpu_regs()?);
+                    println!("{:#?}", kvm.get_vcpu_events()?);
                 }
                 KVM_EXIT_DEBUG => {
                     let regs = kvm.get_vcpu_regs()?;
+                    let sregs = kvm.get_vcpu_sregs()?;
                     // println!("{:#?}", (*kvm_run).__bindgen_anon_1.debug);
-                    println!(
-                        "rip {}, rsp {}, rbx {}, rdi {}, rbp {}",
-                        regs.rip, regs.rsp, regs.rbx, regs.rdi, regs.rbp
-                    );
+                    println!("{:#?}", regs);
                 }
                 reason => {
                     eprintln!("Unhandled exit reason: {reason}");
                     eprintln!("{:#?}", kvm.get_vcpu_events()?);
-
                     break;
                 }
             }
