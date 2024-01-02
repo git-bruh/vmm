@@ -162,7 +162,7 @@ impl Kvm {
             ..Default::default()
         };
 
-        // dbg.arch.debugreg[7] = 0x00000400;
+        dbg.arch.debugreg[7] = 0x00000400;
 
         unsafe {
             kvm_set_guest_debug(self.vcpu.as_raw_fd(), &dbg)?;
@@ -174,16 +174,6 @@ impl Kvm {
                 &kvm_enable_cap {
                     // KVM_CAP_X86_TRIPLE_FAULT_EVENT
                     cap: 218,
-                    ..Default::default()
-                },
-            )?;
-
-            kvm_enable_capability(
-                self.vm.as_raw_fd(),
-                &kvm_enable_cap {
-                    // KVM_CAP_EXCEPTION_PAYLOAD
-                    cap: 164,
-                    args: [1, 0, 0, 0],
                     ..Default::default()
                 },
             )?;

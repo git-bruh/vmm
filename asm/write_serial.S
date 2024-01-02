@@ -1,17 +1,26 @@
 BITS 64
 
-cld
-cli
+in al,0xee
 
-xor eax, eax
-mov ds, eax
-mov es, eax
-mov ss, eax
-mov fs, eax
-mov gs, eax
+mov rbx, msg
+mov rdx, 0x3f8
 
-push 0
-popf
+print:
+  mov rax, [rbx]
+  push rbx
 
-lea rsi, [rel 0x8de12]
-hlt
+  ;; print till NUL terminator
+  cmp rax, 0x0
+  je end
+
+  ;; dx, al correspond to rax, rdx
+  out dx, al
+
+  inc rbx
+  jmp print
+
+end:
+  hlt
+
+msg:
+  db `Hello, KVM!`
