@@ -238,7 +238,7 @@ fn load(mapping: *mut u8) -> u64 {
 
         std::ptr::copy_nonoverlapping(boot_params, mapping.add(0x10000) as *mut boot_params, 1);
 
-        let cmdline = b"console=ttyS0\0";
+        let cmdline = b"\0";
 
         std::ptr::copy_nonoverlapping(cmdline as *const u8, mapping.add(0x20000), cmdline.len());
 
@@ -369,8 +369,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     regs.rsi = 0x10000;
 
     kvm.set_vcpu_regs(&regs)?;
-
-    kvm.enable_debug()?;
+    kvm.setup_cpuid()?;
 
     loop {
         let kvm_run = kvm.run()?;
@@ -383,24 +382,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 KVM_EXIT_IO => {
                     println!(
-                        "IO for port {}: {:#02x}",
+                        "IO for port {}: {}",
                         // TODO abstract out epic bindgen union moment
                         (*kvm_run).__bindgen_anon_1.io.port,
                         // TODO abstract out epic struct as bytes moment
                         *((kvm_run as u64 + (*kvm_run).__bindgen_anon_1.io.data_offset)
-                            as *const u8)
+                            as *const char)
                     );
                 }
                 KVM_EXIT_DEBUG => {
-                    let regs = kvm.get_vcpu_regs()?;
+                    //let regs = kvm.get_vcpu_regs()?;
+                    //eprintln!("{:#?}", (*kvm_run).s.regs.regs.rip);
                     // println!("{:#?}", (*kvm_run).__bindgen_anon_1.debug);
-                    println!(
-                        "rip {}, rsp {}, rbx {}, rdi {}, rbp {}",
-                        regs.rip, regs.rsp, regs.rbx, regs.rdi, regs.rbp
-                    );
+                    // println!(
+                    //    "rip {}, rsp {}, rbx {}, rdi {}, rbp {}",
+                    //    regs.rip, regs.rsp, regs.rbx, regs.rdi, regs.rbp
+                    //);
                 }
                 reason => {
                     eprintln!("Unhandled exit reason: {reason}");
+
                     eprintln!("{:#?}", kvm.get_vcpu_events()?);
 
                     break;

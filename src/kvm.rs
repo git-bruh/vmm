@@ -1,8 +1,8 @@
 use crate::util::WrappedAutoFree;
 use core::num::NonZeroUsize;
 use kvm_bindings::{
-    kvm_enable_cap, kvm_guest_debug, kvm_pit_config, kvm_regs, kvm_run as kvm_run_t, kvm_sregs,
-    kvm_userspace_memory_region, kvm_vcpu_events, KVMIO, KVM_GUESTDBG_ENABLE,
+    kvm_cpuid2, kvm_enable_cap, kvm_guest_debug, kvm_pit_config, kvm_regs, kvm_run as kvm_run_t,
+    kvm_sregs, kvm_userspace_memory_region, kvm_vcpu_events, CpuId, KVMIO, KVM_GUESTDBG_ENABLE,
     KVM_GUESTDBG_SINGLESTEP,
 };
 use nix::{
@@ -36,7 +36,8 @@ ioctl_write_ptr!(kvm_create_pit2, KVMIO, 0x77, kvm_pit_config);
 ioctl_write_ptr!(kvm_set_guest_debug, KVMIO, 0x9b, kvm_guest_debug);
 ioctl_write_ptr!(kvm_enable_capability, KVMIO, 0xa3, kvm_enable_cap);
 ioctl_read!(kvm_get_vcpu_events, KVMIO, 0x9f, kvm_vcpu_events);
-
+ioctl_readwrite!(kvm_get_supported_cpuid, KVMIO, 0x05, kvm_cpuid2);
+ioctl_write_ptr!(kvm_set_cpuid2, KVMIO, 0x90, kvm_cpuid2);
 /*
    Blocked on https://github.com/nix-rust/nix/pull/2233
    ioctl_write_int_bad!(kvm_set_tss_addr, request_code_none!(KVMIO, 0x47));
@@ -49,7 +50,7 @@ unsafe fn kvm_set_tss_addr(fd: c_int, data: u64) -> nix::Result<c_int> {
 }
 
 pub struct Kvm {
-    _kvm: OwnedFd,
+    kvm: OwnedFd,
     vm: OwnedFd,
     vcpu: OwnedFd,
     kvm_run: WrappedAutoFree<*mut kvm_run_t, Box<dyn FnOnce(*mut kvm_run_t)>>,
@@ -95,7 +96,7 @@ impl Kvm {
         );
 
         Ok(Self {
-            _kvm: kvm,
+            kvm,
             vm,
             vcpu,
             kvm_run,
@@ -177,6 +178,8 @@ impl Kvm {
                     ..Default::default()
                 },
             )?;
+
+            (*(*self.kvm_run as *mut kvm_run_t)).kvm_valid_regs = 7;
         }
 
         Ok(())
@@ -190,6 +193,17 @@ impl Kvm {
         }
 
         Ok(events)
+    }
+
+    pub fn setup_cpuid(&self) -> Result<(), std::io::Error> {
+        let mut cpuid2 = CpuId::new(80).expect("should not fail to construct CpuId!");
+
+        unsafe {
+            kvm_get_supported_cpuid(self.kvm.as_raw_fd(), cpuid2.as_mut_fam_struct_ptr())?;
+            kvm_set_cpuid2(self.vcpu.as_raw_fd(), cpuid2.as_fam_struct_ptr())?;
+        };
+
+        Ok(())
     }
 
     pub fn run(&self) -> Result<*const kvm_run_t, std::io::Error> {
