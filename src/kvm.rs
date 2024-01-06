@@ -62,6 +62,7 @@ impl Kvm {
             unsafe { OwnedFd::from_raw_fd(fcntl::open("/dev/kvm", OFlag::O_RDWR, Mode::empty())?) };
         let vm = unsafe { OwnedFd::from_raw_fd(kvm_create_vm(kvm.as_raw_fd(), 0)?) };
 
+        // TODO refactor this, it should be done outside `new`
         unsafe {
             kvm_create_irqchip(vm.as_raw_fd())?;
             kvm_create_pit2(vm.as_raw_fd(), &kvm_pit_config::default())?;
