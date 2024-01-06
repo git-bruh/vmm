@@ -86,6 +86,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     kvm.set_tss_addr(0xFFFFD000)?;
     kvm.setup_cpuid()?;
 
+    let mut buffer = String::new();
+
     loop {
         let kvm_run = kvm.run()?;
 
@@ -98,12 +100,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // TODO abstract out this struct so we don't have to write hacky
                 // C-style code here
                 KVM_EXIT_IO => {
-                    println!(
-                        "IO for port {}: {:#X}",
-                        (*kvm_run).__bindgen_anon_1.io.port,
-                        *((kvm_run as u64 + (*kvm_run).__bindgen_anon_1.io.data_offset)
-                            as *const u8)
-                    );
+                    let port = (*kvm_run).__bindgen_anon_1.io.port;
+                    let byte = *((kvm_run as u64 + (*kvm_run).__bindgen_anon_1.io.data_offset)
+                        as *const u8);
+
+                    if port == 0x3f8 {
+                        match byte {
+                            b'\r' | b'\n' => {
+                                println!("{buffer}");
+                                buffer.clear();
+                            }
+                            c => {
+                                buffer.push(c as char);
+                            }
+                        }
+                    }
+
+                    eprintln!("IO for port {port}: {byte:#X}");
 
                     // `in` instruction, tell it that we're ready to receive data (XMTRDY)
                     // arch/x86/boot/tty.c
