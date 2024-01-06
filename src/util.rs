@@ -52,7 +52,7 @@ impl<T, F: FnOnce(T)> Drop for WrappedAutoFree<T, F> {
 }
 
 /// Packs a `kvm_segment` into a 64-bit value
-fn pack_segment(segment: &kvm_segment) -> u64 {
+pub fn pack_segment(segment: &kvm_segment) -> u64 {
     // We don't need to set a base address
     assert_eq!(segment.base, 0);
 
@@ -101,7 +101,7 @@ fn pack_segment(segment: &kvm_segment) -> u64 {
 
     // 24 .. 31, 32 .. 46 (Base Addr, zero)
     // 47 .. 64 (Bottom 16 bits of limit)
-    (packed << 32) | (segment.limit as u64 >> 4)
+    (packed << 32) | (segment.limit as u64 >> 16)
 }
 
 /// Sets up the GDT according to the boot protocol

@@ -151,6 +151,11 @@ impl<'a> BzImage<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        linux_loader::{CODE_SEGMENT, DATA_SEGMENT},
+        util::pack_segment,
+    };
+
     #[test]
     fn pack_cs() {
         assert_eq!(
