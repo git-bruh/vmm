@@ -1,54 +1,38 @@
-use core::num::NonZeroUsize;
-use kvm_bindings::{kvm_regs, kvm_segment, KVM_EXIT_HLT, KVM_EXIT_IO};
+use kvm_bindings::{KVM_EXIT_HLT, KVM_EXIT_IO};
 use nix::sys::{mman, mman::MapFlags, mman::ProtFlags};
-use std::os::fd::BorrowedFd;
-use vmm::kvm::Kvm;
-use vmm::util::WrappedAutoFree;
+use std::{env, fs::File, io::Read, num::NonZeroUsize, os::fd::BorrowedFd, slice};
+use vmm::{
+    bootparam::boot_e820_entry, kvm::Kvm, linux_loader::BzImage, util, util::WrappedAutoFree,
+};
 
-const CODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/", "write_serial"));
-const MAPPING_SIZE: usize = 1 << 24;
+const MAPPING_SIZE: usize = 1 << 30;
 
-/// Paging
-#[allow(non_snake_case)]
-mod PageFlags {
-    /// The page is present in physical memory
-    pub const PRESENT: u64 = 1 << 0;
-    /// The page is read/write
-    pub const READ_WRITE: u64 = 1 << 1;
-    /// Make PDE map to a 4MiB page, Page Size Extension must be enabled
-    pub const PAGE_SIZE: u64 = 1 << 7;
-}
+const CMDLINE: &[u8] = b"console=ttyS0 earlyprintk=ttyS0\0";
 
-/// Control Register 0
-#[allow(non_snake_case)]
-mod Cr0Flags {
-    /// Enable protected mode
-    pub const PE: u64 = 1 << 0;
-    /// Enable paging
-    pub const PG: u64 = 1 << 31;
-}
-
-/// Control Register 4
-#[allow(non_snake_case)]
-mod Cr4Flags {
-    /// Page Size Extension
-    pub const PSE: u64 = 1 << 4;
-    /// Physical Address Extension, size of large pages is reduced from
-    /// 4MiB to 2MiB and PSE is enabled regardless of the PSE bit
-    pub const PAE: u64 = 1 << 5;
-}
-
-/// Extended Feature Enable Register
-#[allow(non_snake_case)]
-mod EferFlags {
-    /// Long Mode Enable
-    pub const LME: u64 = 1 << 8;
-    /// Long Mode Active
-    pub const LMA: u64 = 1 << 10;
-}
+const ADDR_BOOT_PARAMS: usize = 0x10000;
+const ADDR_CMDLINE: usize = 0x20000;
+const ADDR_KERNEL32: usize = 0x100000;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kvm = Kvm::new()?;
+    let mut bz_image = Vec::new();
+
+    File::open(env::args().nth(1).expect("no bzImage passed!"))
+        .expect("failed to open bzImage!")
+        .read_to_end(&mut bz_image)
+        .expect("failed to read!");
+
+    let loader = BzImage::new(
+        &bz_image,
+        ADDR_CMDLINE.try_into().expect("cmdline address too large!"),
+        &[boot_e820_entry {
+            addr: 0,
+            size: MAPPING_SIZE as u64,
+            // E820_RAM
+            type_: 1,
+        }],
+    )
+    .expect("failed to construct loader!");
 
     // Create a mapping for the "user" memory region where we'll copy the
     // startup code into
@@ -68,56 +52,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
-    unsafe { std::ptr::copy_nonoverlapping(CODE.as_ptr(), *wrapped_mapping as _, CODE.len()) }
-
-    let pml4_offset = 0x1000;
-    let pdpt_offset = 0x2000;
-    let pd_offset = 0x3000;
+    let mapped_slice = unsafe { slice::from_raw_parts_mut(*wrapped_mapping as _, MAPPING_SIZE) };
 
     unsafe {
-        *(wrapped_mapping.add(pml4_offset as usize) as *mut u64) =
-            PageFlags::PRESENT | PageFlags::READ_WRITE | pdpt_offset;
-        *(wrapped_mapping.add(pdpt_offset as usize) as *mut u64) =
-            PageFlags::PRESENT | PageFlags::READ_WRITE | pd_offset;
-        *(wrapped_mapping.add(pd_offset as usize) as *mut u64) =
-            PageFlags::PRESENT | PageFlags::READ_WRITE | PageFlags::PAGE_SIZE;
+        std::ptr::copy_nonoverlapping(
+            &loader.boot_params(),
+            wrapped_mapping.add(ADDR_BOOT_PARAMS) as *mut _,
+            1,
+        );
+        std::ptr::copy_nonoverlapping(
+            CMDLINE.as_ptr(),
+            wrapped_mapping.add(ADDR_CMDLINE as usize) as *mut _,
+            CMDLINE.len(),
+        );
+
+        let kernel32 = loader.kernel32_slice();
+        std::ptr::copy_nonoverlapping(
+            kernel32.as_ptr(),
+            wrapped_mapping.add(ADDR_KERNEL32) as *mut _,
+            kernel32.len(),
+        );
     }
 
-    // The mapping is placed at address 0 in the VM
+    util::setup_gdt(mapped_slice);
+    util::setup_paging(mapped_slice);
+
     kvm.set_user_memory_region(0x0, MAPPING_SIZE as u64, *wrapped_mapping as u64)?;
+    kvm.set_vcpu_regs(&util::setup_regs(
+        ADDR_KERNEL32 as u64 + 0x200,
+        ADDR_BOOT_PARAMS as u64,
+    ))?;
+    kvm.set_vcpu_sregs(&util::setup_sregs())?;
+    kvm.set_tss_addr(0xFFFFD000)?;
+    kvm.setup_cpuid()?;
 
-    let mut sregs = kvm.get_vcpu_sregs()?;
-
-    sregs.cr3 = pml4_offset;
-    sregs.cr4 = Cr4Flags::PAE;
-    sregs.cr0 = Cr0Flags::PE | Cr0Flags::PG;
-    sregs.efer = EferFlags::LMA | EferFlags::LME;
-
-    /// XXX explore why some other projects set bunch of unused flags here and
-    /// store the segment in ds, es, fs, gs, and ss (cite IA64 manual)
-    /// XXX explore what is _actually_ required wrt GDT, etc.
-    let segment = kvm_segment {
-        // Level 0 privilege
-        dpl: 0,
-        db: 0,
-        // Long Mode
-        l: 1,
-        ..Default::default()
-    };
-
-    sregs.cs = segment;
-
-    kvm.set_vcpu_sregs(&sregs)?;
-
-    let mut regs = kvm_regs::default();
-
-    // Specified by x86 (reserved bit)
-    regs.rflags = 1 << 1;
-    // Set the instruction pointer to the start of the copied code
-    regs.rip = 0;
-    regs.rsp = 0x200000;
-
-    kvm.set_vcpu_regs(&regs)?;
+    let mut buffer = String::new();
 
     loop {
         let kvm_run = kvm.run()?;
@@ -128,15 +97,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("KVM_EXIT_HLT");
                     break;
                 }
+                // TODO abstract out this struct so we don't have to write hacky
+                // C-style code here
                 KVM_EXIT_IO => {
-                    println!(
-                        "IO for port {}: {}",
-                        // TODO abstract out epic bindgen union moment
-                        (*kvm_run).__bindgen_anon_1.io.port,
-                        // TODO abstract out epic struct as bytes moment
-                        *((kvm_run as u64 + (*kvm_run).__bindgen_anon_1.io.data_offset)
-                            as *const u8) as char
-                    );
+                    let port = (*kvm_run).__bindgen_anon_1.io.port;
+                    let byte = *((kvm_run as u64 + (*kvm_run).__bindgen_anon_1.io.data_offset)
+                        as *const u8);
+
+                    if port == 0x3f8 {
+                        match byte {
+                            b'\r' | b'\n' => {
+                                println!("{buffer}");
+                                buffer.clear();
+                            }
+                            c => {
+                                buffer.push(c as char);
+                            }
+                        }
+                    }
+
+                    eprintln!("IO for port {port}: {byte:#X}");
+
+                    // `in` instruction, tell it that we're ready to receive data (XMTRDY)
+                    // arch/x86/boot/tty.c
+                    if (*kvm_run).__bindgen_anon_1.io.direction == 0 {
+                        *((kvm_run as *mut u8)
+                            .add((*kvm_run).__bindgen_anon_1.io.data_offset as usize)) = 0x20;
+                    }
                 }
                 reason => {
                     eprintln!("Unhandled exit reason: {reason}");
