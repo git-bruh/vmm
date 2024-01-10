@@ -106,9 +106,9 @@ impl Kvm {
 
     pub fn set_user_memory_region(
         &self,
-        guest_addr: u64,
+        guest_phys_addr: u64,
         memory_size: u64,
-        map_addr: u64,
+        userspace_addr: u64,
     ) -> Result<(), std::io::Error> {
         unsafe {
             kvm_set_user_memory_region(
@@ -116,9 +116,9 @@ impl Kvm {
                 &kvm_userspace_memory_region {
                     slot: 0,
                     flags: 0,
-                    guest_phys_addr: guest_addr,
-                    memory_size: memory_size,
-                    userspace_addr: map_addr,
+                    guest_phys_addr,
+                    memory_size,
+                    userspace_addr,
                 },
             )?;
         }
@@ -158,7 +158,7 @@ impl Kvm {
         Ok(())
     }
 
-    pub fn enable_debug(&self) -> Result<(), std::io::Error> {
+    pub fn enable_debug(&mut self) -> Result<(), std::io::Error> {
         let mut dbg = kvm_guest_debug {
             control: KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP,
             ..Default::default()
@@ -180,7 +180,7 @@ impl Kvm {
                 },
             )?;
 
-            (*(*self.kvm_run as *mut kvm_run_t)).kvm_valid_regs = 7;
+            (*(*self.kvm_run)).kvm_valid_regs = 7;
         }
 
         Ok(())

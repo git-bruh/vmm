@@ -140,7 +140,7 @@ impl<'a> BzImage<'a> {
 
     /// Get the boot parameters
     pub fn boot_params(&self) -> boot_params {
-        self.boot_params.clone()
+        self.boot_params
     }
 
     /// Get a slice to the image, pointing to the 32-bit startup code

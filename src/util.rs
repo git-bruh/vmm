@@ -28,13 +28,13 @@ impl<T, F: FnOnce(T)> Deref for WrappedAutoFree<T, F> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        &*self.val
+        &self.val
     }
 }
 
 impl<T, F: FnOnce(T)> DerefMut for WrappedAutoFree<T, F> {
     fn deref_mut(&mut self) -> &mut T {
-        &mut *self.val
+        &mut self.val
     }
 }
 
