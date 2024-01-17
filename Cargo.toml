@@ -8,3 +8,6 @@ edition = "2021"
 [dependencies]
 kvm-bindings = { version = "0.6.0", features = ["fam-wrappers"] }
 nix = { version = "0.27.1", features = ["fs", "mman", "ioctl"] }
+
+[build-dependencies]
+bindgen = "0.69.2"
