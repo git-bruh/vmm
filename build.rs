@@ -3,7 +3,7 @@ use std::{env, path::PathBuf};
 fn main() {
     let bootparam = PathBuf::from(env::var("OUT_DIR").unwrap()).join("bootparam.rs");
     bindgen::builder()
-        .header("bootparam.h")
+        .header("bindgen/bootparam.h")
         .derive_default(true)
         .generate()
         .expect("unable to generate bindings for bootparam.h")
