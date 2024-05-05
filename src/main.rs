@@ -40,18 +40,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         Some(initramfs.len().try_into().expect("initramfs too big")),
         &[
+            // Memory before the EBDA entry
             boot_e820_entry {
                 addr: 0,
                 size: 0x9fc00,
                 // E820_RAM
                 type_: 1,
             },
+            // Reserved EBDA entry
             boot_e820_entry {
                 addr: 0x9fc00,
                 size: 1 << 10,
                 // E820_RESERVED,
                 type_: 2,
             },
+            // Memory after the beginning of the kernel image
             boot_e820_entry {
                 addr: 0x100000,
                 size: MAPPING_SIZE as u64 - 0x100000,
