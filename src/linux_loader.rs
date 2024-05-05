@@ -122,7 +122,9 @@ impl<'a> BzImage<'a> {
         boot_params.hdr.ramdisk_image = initramfs_addr.unwrap_or(0);
         boot_params.hdr.ramdisk_size = initramfs_size.unwrap_or(0);
 
-        boot_params.hdr.heap_end_ptr = 0;
+        // https://www.kernel.org/doc/html/latest/arch/x86/boot.html#sample-boot-configuration
+        // 0xe000 - 0x200
+        boot_params.hdr.heap_end_ptr = 0xde00;
         // The command line parameters can be located anywhere in 64-bit mode
         // Must be NUL terminated
         boot_params.hdr.cmd_line_ptr = cmdline_addr;
