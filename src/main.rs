@@ -113,7 +113,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     kvm.set_user_memory_region(0x0, MAPPING_SIZE as u64, *wrapped_mapping as u64)?;
     kvm.set_vcpu_regs(&util::setup_regs(
+        // 64-bit code is located 512 bytes ahead of the 32-bit code
         ADDR_KERNEL32 as u64 + 0x200,
+        // boot params are stored in rsi
         ADDR_BOOT_PARAMS as u64,
     ))?;
     kvm.set_vcpu_sregs(&util::setup_sregs())?;
