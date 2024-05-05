@@ -69,6 +69,8 @@ impl<'a> BzImage<'a> {
     pub fn new(
         bz_image: &'a [u8],
         cmdline_addr: u32,
+        initramfs_addr: Option<u32>,
+        initramfs_size: Option<u32>,
         e820_entries: &[boot_e820_entry],
     ) -> Result<BzImage<'a>, LoaderError> {
         // The setup_header is located at offset 0x1f1 (`hdr` field) from the start
@@ -88,7 +90,7 @@ impl<'a> BzImage<'a> {
             ptr::copy_nonoverlapping(bz_image.as_ptr().cast(), &mut boot_params, 1);
         }
 
-        // `boot_flag` and `header` are magic values documented in thee boot protocol
+        // `boot_flag` and `header` are magic values documented in the boot protocol
         // > Then, the setup header at offset 0x01f1 of kernel image on should be
         // > loaded into struct boot_params and examined. The end of setup header
         // > can be calculated as follows: 0x0202 + byte value at offset 0x0201
@@ -117,14 +119,14 @@ impl<'a> BzImage<'a> {
         // CAN_USE_HEAP: Self explanatory
         boot_params.hdr.loadflags |= (LOADED_HIGH | CAN_USE_HEAP) as u8;
 
-        // TODO initramfs
-        boot_params.hdr.ramdisk_image = 0;
-        boot_params.hdr.ramdisk_size = 0;
+        boot_params.hdr.ramdisk_image = initramfs_addr.unwrap_or(0);
+        boot_params.hdr.ramdisk_size = initramfs_size.unwrap_or(0);
 
         boot_params.hdr.heap_end_ptr = 0;
         // The command line parameters can be located anywhere in 64-bit mode
         // Must be NUL terminated
         boot_params.hdr.cmd_line_ptr = cmdline_addr;
+        boot_params.ext_cmd_line_ptr = 0;
 
         boot_params.e820_entries = e820_entries
             .len()

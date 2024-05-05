@@ -1,4 +1,4 @@
-use kvm_bindings::{KVM_EXIT_HLT, KVM_EXIT_IO};
+use kvm_bindings::{KVM_EXIT_DEBUG, KVM_EXIT_HLT, KVM_EXIT_IO};
 use nix::sys::{mman, mman::MapFlags, mman::ProtFlags};
 use std::{env, fs::File, io::Read, num::NonZeroUsize, os::fd::BorrowedFd, slice};
 use vmm::{
@@ -7,11 +7,12 @@ use vmm::{
 
 const MAPPING_SIZE: usize = 1 << 30;
 
-const CMDLINE: &[u8] = b"console=ttyS0 earlyprintk=ttyS0\0";
+const CMDLINE: &[u8] = b"console=ttyS0 earlyprintk=ttyS0 rdinit=/init\0";
 
 const ADDR_BOOT_PARAMS: usize = 0x10000;
 const ADDR_CMDLINE: usize = 0x20000;
 const ADDR_KERNEL32: usize = 0x100000;
+const ADDR_INITRAMFS: usize = 0xf000000;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kvm = Kvm::new()?;
@@ -22,15 +23,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .read_to_end(&mut bz_image)
         .expect("failed to read!");
 
+    let mut initramfs = Vec::new();
+
+    File::open(env::args().nth(2).expect("no initramfs passed!"))
+        .expect("failed to open initramfs")
+        .read_to_end(&mut initramfs)
+        .expect("failed to read!");
+
     let loader = BzImage::new(
         &bz_image,
         ADDR_CMDLINE.try_into().expect("cmdline address too large!"),
-        &[boot_e820_entry {
-            addr: 0,
-            size: MAPPING_SIZE as u64,
-            // E820_RAM
-            type_: 1,
-        }],
+        Some(
+            ADDR_INITRAMFS
+                .try_into()
+                .expect("initramfs address too large!"),
+        ),
+        Some(initramfs.len().try_into().expect("initramfs too big")),
+        &[
+            boot_e820_entry {
+                addr: 0,
+                size: 0x9fc00,
+                // E820_RAM
+                type_: 1,
+            },
+            boot_e820_entry {
+                addr: 0x9fc00,
+                size: 1 << 10,
+                // E820_RESERVED,
+                type_: 2,
+            },
+            boot_e820_entry {
+                addr: 0x100000,
+                size: MAPPING_SIZE as u64 - 0x100000,
+                type_: 1,
+            },
+        ],
     )
     .expect("failed to construct loader!");
 
@@ -60,17 +87,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             wrapped_mapping.add(ADDR_BOOT_PARAMS) as *mut _,
             1,
         );
-        std::ptr::copy_nonoverlapping(
-            CMDLINE.as_ptr(),
-            wrapped_mapping.add(ADDR_CMDLINE as usize) as *mut _,
-            CMDLINE.len(),
-        );
-
         let kernel32 = loader.kernel32_slice();
         std::ptr::copy_nonoverlapping(
             kernel32.as_ptr(),
             wrapped_mapping.add(ADDR_KERNEL32) as *mut _,
             kernel32.len(),
+        );
+        std::ptr::copy_nonoverlapping(
+            CMDLINE.as_ptr(),
+            wrapped_mapping.add(ADDR_CMDLINE) as *mut _,
+            CMDLINE.len(),
+        );
+        std::ptr::copy_nonoverlapping(
+            initramfs.as_ptr(),
+            wrapped_mapping.add(ADDR_INITRAMFS) as *mut _,
+            initramfs.len(),
         );
     }
 
@@ -96,6 +127,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 KVM_EXIT_HLT => {
                     eprintln!("KVM_EXIT_HLT");
                     break;
+                }
+                KVM_EXIT_DEBUG => {
+                    eprintln!(
+                        "{:#?}\n{:#?}",
+                        kvm.get_vcpu_regs(),
+                        (*kvm_run).__bindgen_anon_1.debug
+                    );
                 }
                 // TODO abstract out this struct so we don't have to write hacky
                 // C-style code here
